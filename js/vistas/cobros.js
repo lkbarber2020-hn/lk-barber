@@ -44,7 +44,8 @@ vista('cobros', {
 
   detalle(c, recargar) {
     const lineas = c.detalle.map(d => d.tipo === 'Servicio'
-      ? `<div><span>${h(d.descripcion)}</span><span class="suave">servicio</span></div>`
+      // Los cobros anteriores al pago por porcentaje no guardaban el valor de cada servicio
+      ? `<div><span>${h(d.descripcion)}</span>${Number(d.importe) ? `<span>${Fmt.L(d.importe)}</span>` : '<span class="suave">servicio</span>'}</div>`
       : `<div><span>${h(d.descripcion)} × ${d.cantidad}</span><span>${Fmt.L(d.importe)}</span></div>`).join('');
     const cuerpo = `
       ${c.estado === 'Anulado' ? `<div class="aviso rojo mb"><i class="bi bi-x-circle"></i>Anulado: ${h(c.motivo_anulacion)}</div>` : ''}

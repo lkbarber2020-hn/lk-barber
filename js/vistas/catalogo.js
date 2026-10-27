@@ -9,13 +9,17 @@ const recargarProductos = async () => {
 
 /* ----- Servicios ---------------------------------------------------------- */
 
+/** Servicio con porcentaje: gana ese % de lo cobrado. Sin porcentaje: monto fijo. */
+const conPorcentaje = (s) => s.porcentaje_barbero != null;
+const textoGana = (s) => conPorcentaje(s) ? `${Number(s.porcentaje_barbero)} %` : Fmt.L(s.pago_barbero);
+
 vista('servicios', {
   titulo: 'Servicios', icono: 'scissors', roles: DUENO,
   render(cont) {
     const lista = App.datos.servicios;
-    const sinPago = lista.filter(s => s.activo && !Number(s.pago_barbero));
+    const sinPago = lista.filter(s => s.activo && !Number(conPorcentaje(s) ? s.porcentaje_barbero : s.pago_barbero));
     cont.innerHTML = `<div class="barra-herramientas">
-        <p class="crece suave" style="margin:0">Lo que aparece en Cobrar para tocar. El barbero escribe cuánto cobró; aquí se define cuánto gana él por cada servicio.</p>
+        <p class="crece suave" style="margin:0">Lo que aparece en Cobrar para tocar. El barbero escribe cuánto cobró; aquí se define qué parte gana él por cada servicio.</p>
         <button class="btn" id="sv-nuevo"><i class="bi bi-plus-lg"></i> Nuevo servicio</button></div>
       ${sinPago.length ? `<div class="aviso ambar mb"><i class="bi bi-exclamation-triangle"></i>
         <span>Falta poner cuánto gana el barbero en: <b>${h(sinPago.map(s => s.nombre).join(', '))}</b>. Toque cada uno para completarlo.</span></div>` : ''}
@@ -24,31 +28,43 @@ vista('servicios', {
         <tbody>${lista.map((s, i) => `<tr class="clic" data-i="${i}">
           <td data-t="Servicio"><strong>${h(s.nombre)}</strong></td>
           <td data-t="Precio sugerido" class="num">${s.precio_sugerido == null ? '<span class="suave">—</span>' : Fmt.L(s.precio_sugerido)}</td>
-          <td data-t="Gana el barbero" class="num"><strong>${Fmt.L(s.pago_barbero)}</strong></td>
+          <td data-t="Gana el barbero" class="num"><strong>${textoGana(s)}</strong></td>
           <td data-t="Estado">${s.activo ? '<span class="etiqueta verde">Activo</span>' : '<span class="etiqueta gris">Oculto</span>'}</td></tr>`).join('')}
         </tbody></table></div>` : UI.vacio('scissors', 'No hay servicios.')}</div>`;
     const recargar = async () => { App.datos.servicios = await q(sb.from('servicios').select('*').order('orden').order('nombre')); this.render(cont); };
-    cont.querySelector('#sv-nuevo').onclick = () => this.editar({ activo: true, pago_barbero: 0, orden: lista.length + 1 }, recargar);
+    cont.querySelector('#sv-nuevo').onclick = () => this.editar({ activo: true, porcentaje_barbero: 50, pago_barbero: 0, orden: lista.length + 1 }, recargar);
     cont.querySelectorAll('tr[data-i]').forEach(tr => tr.onclick = () => this.editar(lista[Number(tr.dataset.i)], recargar));
   },
 
   editar(s, recargar) {
     const campos = [
       { n: 'nombre', t: 'Nombre', req: true, ancho: true, ph: 'Ej. Corte de pelo' },
-      { n: 'pago_barbero', t: 'Gana el barbero (L)', tipo: 'number', req: true, min: 0, inputmode: 'decimal',
+      { n: 'modo', t: '¿Cómo gana el barbero?', tipo: 'select', ancho: true,
+        op: [['porcentaje', 'Un porcentaje de lo que se cobró'], ['fijo', 'Un monto fijo']] },
+      { n: 'porcentaje_barbero', t: 'Porcentaje para el barbero (%)', tipo: 'number', min: 0, max: 100, inputmode: 'decimal',
+        ayuda: 'Ej. 50: de L 200 cobrados, L 100 son del barbero y L 100 del negocio.' },
+      { n: 'pago_barbero', t: 'Gana el barbero (L)', tipo: 'number', min: 0, inputmode: 'decimal',
         ayuda: 'Monto fijo que gana el barbero cada vez que hace este servicio.' },
       { n: 'precio_sugerido', t: 'Precio sugerido (L, opcional)', tipo: 'number', min: 0, inputmode: 'decimal',
         ayuda: 'Si lo pone, se propone al cobrar. El barbero lo puede cambiar.' },
       { n: 'orden', t: 'Posición en la pantalla de cobrar', tipo: 'number', min: 0, paso: 1, ayuda: 'Los números más bajos salen primero.' },
       { n: 'activo', t: 'Mostrar en Cobrar', tipo: 'check' }
     ];
-    UI.modal({
-      titulo: s.id ? 'Editar servicio' : 'Nuevo servicio', cuerpo: Form.html(campos, s),
+    const m = UI.modal({
+      titulo: s.id ? 'Editar servicio' : 'Nuevo servicio', cuerpo: Form.html(campos, { ...s, modo: conPorcentaje(s) ? 'porcentaje' : 'fijo' }),
       botones: [
         { texto: 'Cancelar', clase: 'sec' },
         {
           texto: 'Guardar', icono: 'check2', accion: async (m) => {
-            const v = Form.leer(m.cuerpo, campos);
+            const { modo, ...v } = Form.leer(m.cuerpo, campos);
+            if (modo === 'porcentaje') {
+              if (v.porcentaje_barbero === null) throw new Error('Escriba el porcentaje para el barbero.');
+              if (v.porcentaje_barbero > 100) throw new Error('El porcentaje no puede pasar de 100.');
+            } else {
+              if (v.pago_barbero === null) throw new Error('Escriba cuánto gana el barbero.');
+              v.porcentaje_barbero = null;
+            }
+            v.pago_barbero = v.pago_barbero ?? 0;
             v.orden = v.orden ?? 0;
             if (s.id) await q(sb.from('servicios').update(v).eq('id', s.id));
             else await q(sb.from('servicios').insert(v));
@@ -58,6 +74,14 @@ vista('servicios', {
         }
       ]
     });
+    // Solo se ve el campo del modo elegido
+    const modo = m.cuerpo.querySelector('[name="modo"]');
+    const mostrar = () => {
+      m.cuerpo.querySelector('[name="porcentaje_barbero"]').closest('.campo').style.display = modo.value === 'porcentaje' ? '' : 'none';
+      m.cuerpo.querySelector('[name="pago_barbero"]').closest('.campo').style.display = modo.value === 'fijo' ? '' : 'none';
+    };
+    modo.onchange = mostrar;
+    mostrar();
   }
 });
 

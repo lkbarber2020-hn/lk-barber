@@ -1,8 +1,8 @@
 /* ==========================================================================
    Cobrar: la pantalla principal. Tres pasos y un botón:
    1) qué barbero atendió, 2) qué se hizo y cuánto se cobró, 3) productos.
-   El valor de los servicios lo escribe el barbero porque varía mucho;
-   los productos tienen precio fijo del catálogo.
+   El valor de cada servicio lo escribe el barbero porque varía mucho (de
+   ahí sale su porcentaje); los productos tienen precio fijo del catálogo.
    ========================================================================== */
 
 const METODOS_PAGO = [['Efectivo', 'cash-stack'], ['Tarjeta', 'credit-card'], ['Transferencia', 'phone']];
@@ -18,11 +18,22 @@ const Cobro = {
   iniciado: false, enviando: false,
   limpiar() {
     Object.assign(this, {
-      iniciado: true, barbero: barberoPropio(), servicios: new Set(), monto: '', montoTocado: false,
+      iniciado: true, barbero: barberoPropio(), servicios: new Map(),   // id → lo que se cobró (texto del campo)
       productos: new Map(), metodo: 'Efectivo', pagaCon: ''
     });
   },
-  montoServicios() { return redondear(Number(this.monto) || 0); },
+  montoDe(id) { return redondear(Number(this.servicios.get(id)) || 0); },
+  montoServicios() { let t = 0; this.servicios.forEach((_, id) => { t += this.montoDe(id); }); return redondear(t); },
+  /** Estimado de lo que gana el barbero; el valor oficial lo calcula la base de datos. */
+  ganaBarbero() {
+    let t = 0;
+    this.servicios.forEach((_, id) => {
+      const s = App.datos.servicios.find(x => x.id === id);
+      if (s) t += s.porcentaje_barbero != null ? redondear(this.montoDe(id) * s.porcentaje_barbero / 100) : Number(s.pago_barbero);
+    });
+    this.productos.forEach((cant, id) => { const p = App.datos.productos.find(x => x.id === id); if (p) t += redondear(p.pago_barbero * cant); });
+    return redondear(t);
+  },
   montoProductos() {
     let t = 0;
     this.productos.forEach((cant, id) => { const p = App.datos.productos.find(x => x.id === id); if (p) t += p.precio * cant; });
@@ -51,10 +62,7 @@ vista('cobrar', {
           <section class="panel">
             <h3 class="panel-titulo"><span class="paso">2</span>¿Qué se hizo?</h3>
             <div class="chips" id="co-servicios"></div>
-            <div class="campo mt" style="margin-bottom:0">
-              <label for="co-monto">¿Cuánto se cobró por eso? (${h(App.config.moneda)})</label>
-              <input id="co-monto" class="monto-grande" type="number" inputmode="decimal" min="0" step="any" placeholder="0.00" value="${h(Cobro.monto)}">
-            </div>
+            <div id="co-montos"></div>
           </section>
           ${productos.length ? `<section class="panel">
             <h3 class="panel-titulo"><span class="paso">3</span>Productos <span class="suave peq">(si llevó algo)</span></h3>
@@ -67,12 +75,11 @@ vista('cobrar', {
       </div>
       <div class="barra-movil visible" id="co-barra"></div>`;
 
-    const monto = cont.querySelector('#co-monto');
-    monto.oninput = () => { Cobro.monto = monto.value; Cobro.montoTocado = monto.value !== ''; this.pintarResumen(cont); };
     cont.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { Cobro.categoria = b.dataset.cat; this.render(cont); });
 
     this.pintarBarberos(cont);
     this.pintarServicios(cont);
+    this.pintarMontos(cont);
     this.pintarProductos(cont);
     this.pintarResumen(cont);
   },
@@ -101,16 +108,30 @@ vista('cobrar', {
       <i class="bi bi-${Cobro.servicios.has(s.id) ? 'check-circle-fill' : 'circle'}"></i>${h(s.nombre)}</button>`).join('');
     caja.querySelectorAll('[data-s]').forEach(el => el.onclick = () => {
       const id = Number(el.dataset.s);
-      if (Cobro.servicios.has(id)) Cobro.servicios.delete(id); else Cobro.servicios.add(id);
-      // Mientras el barbero no escriba un valor, se propone la suma de los precios sugeridos
-      if (!Cobro.montoTocado) {
-        const sugerido = App.datos.servicios.filter(s => Cobro.servicios.has(s.id)).reduce((t, s) => t + Number(s.precio_sugerido || 0), 0);
-        Cobro.monto = sugerido > 0 ? String(redondear(sugerido)) : '';
-        cont.querySelector('#co-monto').value = Cobro.monto;
-      }
+      const s = servicios.find(x => x.id === id);
+      // Al elegirlo se propone el precio sugerido; el barbero lo puede cambiar
+      if (Cobro.servicios.has(id)) Cobro.servicios.delete(id);
+      else Cobro.servicios.set(id, s.precio_sugerido > 0 ? String(redondear(Number(s.precio_sugerido))) : '');
       this.pintarServicios(cont);
+      this.pintarMontos(cont, id);
       this.pintarResumen(cont);
     });
+  },
+
+  /** Un campo "cuánto se cobró" por cada servicio elegido. */
+  pintarMontos(cont, enfocar) {
+    const caja = cont.querySelector('#co-montos');
+    const elegidos = App.datos.servicios.filter(s => Cobro.servicios.has(s.id));
+    caja.innerHTML = elegidos.map(s => `<div class="campo mt" style="margin-bottom:0">
+        <label for="co-monto-${s.id}">¿Cuánto se cobró por ${h(s.nombre)}? (${h(App.config.moneda)})</label>
+        <input id="co-monto-${s.id}" data-monto="${s.id}" class="monto-grande" type="number" inputmode="decimal" min="0" step="any" placeholder="0.00" value="${h(Cobro.servicios.get(s.id))}">
+      </div>`).join('');
+    caja.querySelectorAll('[data-monto]').forEach(el => el.oninput = () => {
+      Cobro.servicios.set(Number(el.dataset.monto), el.value);
+      this.pintarResumen(cont);
+    });
+    const campo = enfocar && caja.querySelector(`[data-monto="${enfocar}"]`);
+    if (campo && !campo.value) campo.focus();
   },
 
   pintarProductos(cont) {
@@ -157,6 +178,7 @@ vista('cobrar', {
         <div><span>Barbero</span><span>${barbero ? h(barbero.nombre) : '<span style="color:var(--rojo)">Elegir</span>'}</span></div>
         <div><span>Servicios</span><span>${servicios.length ? h(servicios.join(', ')) : '—'}</span></div>
         <div><span>Valor de servicios</span><span>${Fmt.L(Cobro.montoServicios())}</span></div>
+        <div><span>Gana el barbero</span><span>${Fmt.L(Cobro.ganaBarbero())}</span></div>
       </div>
       ${lineas}
       <div class="total-grande"><span>Total</span><span>${Fmt.L(total)}</span></div>
@@ -193,11 +215,11 @@ vista('cobrar', {
     try {
       if (!Cobro.barbero) throw new Error('Toque el barbero que atendió.');
       if (!Cobro.servicios.size && !Cobro.productos.size) throw new Error('Elija qué se hizo o qué producto lleva.');
-      if (Cobro.servicios.size && Cobro.montoServicios() <= 0) {
-        cont.querySelector('#co-monto').focus();
-        throw new Error('Escriba cuánto se cobró por los servicios.');
+      const sinMonto = App.datos.servicios.find(s => Cobro.servicios.has(s.id) && Cobro.montoDe(s.id) <= 0);
+      if (sinMonto) {
+        cont.querySelector(`[data-monto="${sinMonto.id}"]`).focus();
+        throw new Error(`Escriba cuánto se cobró por ${sinMonto.nombre}.`);
       }
-      if (!Cobro.servicios.size && Cobro.montoServicios() > 0) throw new Error('Elija qué servicios se hicieron.');
       if (Cobro.metodo === 'Efectivo' && Cobro.pagaCon !== '' && Number(Cobro.pagaCon) < Cobro.total()) {
         throw new Error('Con lo que paga no alcanza para el total.');
       }
@@ -210,7 +232,7 @@ vista('cobrar', {
       const r = await rpc('registrar_cobro', {
         p: {
           barbero_id: Cobro.barbero, metodo_pago: Cobro.metodo,
-          servicios: [...Cobro.servicios], monto_servicios: Cobro.montoServicios(),
+          servicios: [...Cobro.servicios.keys()].map(id => ({ id, monto: Cobro.montoDe(id) })),
           productos: [...Cobro.productos].map(([id, cantidad]) => ({ id, cantidad }))
         }
       });
