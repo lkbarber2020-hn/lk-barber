@@ -53,6 +53,16 @@ vista('servicios', {
     const m = UI.modal({
       titulo: s.id ? 'Editar servicio' : 'Nuevo servicio', cuerpo: Form.html(campos, { ...s, modo: conPorcentaje(s) ? 'porcentaje' : 'fijo' }),
       botones: [
+        ...(s.id ? [{
+          texto: 'Eliminar', clase: 'sec', icono: 'trash', accion: async () => {
+            const si = await UI.confirmar(`¿Eliminar <b>${h(s.nombre)}</b>? Ya no saldrá en Cobrar. Los cobros ya hechos no cambian.`,
+              { titulo: 'Eliminar servicio', si: 'Sí, eliminar', peligro: true });
+            if (!si) return false;
+            await rpc('eliminar_servicio', { p_servicio: s.id });
+            UI.ok('Servicio eliminado.');
+            recargar();
+          }
+        }] : []),
         { texto: 'Cancelar', clase: 'sec' },
         {
           texto: 'Guardar', icono: 'check2', accion: async (m) => {
