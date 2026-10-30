@@ -48,14 +48,16 @@ vista('cuentas', {
       return;
     }
 
-    const suma = (campo) => redondear(cobros.reduce((t, c) => t + Number(c[campo]), 0));
-    const porMetodo = (m) => redondear(cobros.filter(c => c.metodo_pago === m).reduce((t, c) => t + Number(c.total), 0));
+    // La propina entra a caja con la forma de pago del cobro, pero es toda del barbero
+    const suma = (campo) => redondear(cobros.reduce((t, c) => t + Number(c[campo] || 0), 0));
+    const porMetodo = (m) => redondear(cobros.filter(c => c.metodo_pago === m).reduce((t, c) => t + Number(c.total) + Number(c.propina || 0), 0));
     const kpis = esDueno() ? `<div class="kpis">
-        <div class="kpi acento"><small>Total cobrado</small><strong>${Fmt.L(suma('total'))}</strong></div>
+        <div class="kpi acento"><small>Ventas</small><strong>${Fmt.L(suma('total'))}</strong></div>
+        <div class="kpi"><small>Propinas</small><strong>${Fmt.L(suma('propina'))}</strong></div>
         <div class="kpi"><small>Efectivo</small><strong>${Fmt.L(porMetodo('Efectivo'))}</strong></div>
         <div class="kpi"><small>Tarjeta</small><strong>${Fmt.L(porMetodo('Tarjeta'))}</strong></div>
         <div class="kpi"><small>Transferencia</small><strong>${Fmt.L(porMetodo('Transferencia'))}</strong></div>
-        <div class="kpi"><small>Pago a barberos</small><strong>${Fmt.L(suma('pago_barbero'))}</strong></div>
+        <div class="kpi"><small>Pago a barberos (con propinas)</small><strong>${Fmt.L(suma('pago_barbero') + suma('propina'))}</strong></div>
         <div class="kpi verde"><small>Queda para el negocio</small><strong>${Fmt.L(suma('total') - suma('pago_barbero'))}</strong></div>
       </div>` : '';
 
@@ -78,12 +80,14 @@ vista('cuentas', {
         <div class="lista-def mt" style="margin-top:8px">
           <div><span>Cobrado en servicios</span><span>${Fmt.L(x.servicio)}</span></div>
           <div><span>Productos vendidos</span><span>${Fmt.L(x.producto)}</span></div>
+          <div><span>Ganancia (comisión)</span><span>${Fmt.L(x.pago)}</span></div>
+          <div><span>Propinas</span><span>${Fmt.L(x.propina)}</span></div>
         </div>
         ${dias}
-        <div class="cuenta-pago"><span>${etiquetaPago}</span><strong>${Fmt.L(x.pago)}</strong></div>
+        <div class="cuenta-pago"><span>${etiquetaPago}</span><strong>${Fmt.L(x.pago + x.propina)}</strong></div>
       </div>`;
     }).join('') + '</div>' +
-      (semana ? '<p class="suave peq mt">Los números de cada día son lo que ganó el barbero ese día.</p>' : '');
+      (semana ? '<p class="suave peq mt">Los números de cada día son lo que ganó el barbero ese día, con propinas.</p>' : '');
 
     cuerpo.querySelectorAll('.cuenta').forEach(el => el.onclick = () => {
       const id = Number(el.dataset.b);
@@ -91,7 +95,7 @@ vista('cuentas', {
     });
   },
 
-  vacia() { return { cobros: 0, servicios: 0, unidades: 0, servicio: 0, producto: 0, pago: 0, conteo: {}, dias: {} }; },
+  vacia() { return { cobros: 0, servicios: 0, unidades: 0, servicio: 0, producto: 0, pago: 0, propina: 0, conteo: {}, dias: {} }; },
 
   /** Suma los cobros por barbero. */
   agrupar(cobros) {
@@ -104,7 +108,8 @@ vista('cuentas', {
       x.servicio = redondear(x.servicio + Number(c.monto_servicios));
       x.producto = redondear(x.producto + Number(c.monto_productos));
       x.pago = redondear(x.pago + Number(c.pago_barbero));
-      x.dias[dia] = redondear((x.dias[dia] || 0) + Number(c.pago_barbero));
+      x.propina = redondear(x.propina + Number(c.propina || 0));
+      x.dias[dia] = redondear((x.dias[dia] || 0) + Number(c.pago_barbero) + Number(c.propina || 0));
       c.detalle.forEach(d => {
         if (d.tipo === 'Servicio') { x.servicios++; x.conteo[d.descripcion] = (x.conteo[d.descripcion] || 0) + 1; }
         else x.unidades += d.cantidad;
@@ -118,24 +123,28 @@ vista('cuentas', {
     const cuerpo = `
       <p class="suave" style="margin-top:0">${h(rango)}</p>
       ${cobros.length ? `<div class="tabla-envoltura"><table class="tabla apilable">
-        <thead><tr><th>Fecha</th><th>Lo que se hizo</th><th class="num">Cobrado</th><th class="num">Gana</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Lo que se hizo</th><th class="num">Cobrado</th><th class="num">Gana</th><th class="num">Propina</th></tr></thead>
         <tbody>${cobros.map(c => `<tr>
           <td data-t="Fecha">${h(Fmt.fechaHora(c.fecha))}<div class="suave peq">${h(c.numero)} · ${h(c.metodo_pago)}</div></td>
           <td data-t="Detalle">${h(c.detalle.map(d => d.tipo === 'Producto' && d.cantidad > 1 ? `${d.descripcion} ×${d.cantidad}` : d.descripcion).join(', '))}</td>
           <td data-t="Cobrado" class="num">${Fmt.L(c.total)}</td>
-          <td data-t="Gana" class="num"><strong>${Fmt.L(c.pago_barbero)}</strong></td></tr>`).join('')}
+          <td data-t="Gana" class="num"><strong>${Fmt.L(c.pago_barbero)}</strong></td>
+          <td data-t="Propina" class="num">${Number(c.propina) ? Fmt.L(c.propina) : '—'}</td></tr>`).join('')}
         </tbody></table></div>` : UI.vacio('scissors', 'Sin cobros en este periodo.')}
       <div class="lista-def mt">
         <div><span>Servicios hechos</span><span>${x.servicios}</span></div>
         <div><span>Productos vendidos</span><span>${x.unidades}</span></div>
-        <div class="total"><span>Total a pagar</span><span>${Fmt.L(x.pago)}</span></div>
+        <div><span>Ganancia (comisión)</span><span>${Fmt.L(x.pago)}</span></div>
+        <div><span>Propinas</span><span>${Fmt.L(x.propina)}</span></div>
+        <div class="total"><span>Total a pagar</span><span>${Fmt.L(x.pago + x.propina)}</span></div>
       </div>`;
     const tel = String(b.telefono || '').replace(/\D/g, '');
     const botones = [{ texto: 'Cerrar', clase: 'sec' }];
     if (esDueno() && tel) botones.push({
       texto: 'Enviar por WhatsApp', icono: 'whatsapp', accion: () => {
         const texto = `*${App.config.nombre_negocio}* — Cuenta de ${b.nombre}\n${rango}\n` +
-          `Servicios: ${x.servicios} · Productos: ${x.unidades}\n*Total a pagar: ${Fmt.L(x.pago)}*`;
+          `Servicios: ${x.servicios} · Productos: ${x.unidades}\n` +
+          `Comisión: ${Fmt.L(x.pago)} · Propinas: ${Fmt.L(x.propina)}\n*Total a pagar: ${Fmt.L(x.pago + x.propina)}*`;
         window.open('https://wa.me/' + (tel.length === 8 ? '504' + tel : tel) + '?text=' + encodeURIComponent(texto), '_blank');
         return false;
       }

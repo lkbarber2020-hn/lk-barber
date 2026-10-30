@@ -27,7 +27,9 @@ vista('cobros', {
     if (Historial.barbero) consulta = consulta.eq('barbero_id', Number(Historial.barbero));
     const cobros = await q(consulta);
     const validos = cobros.filter(c => c.estado === 'Emitido');
-    cont.querySelector('#hi-total').textContent = `${validos.length} ${validos.length === 1 ? 'cobro' : 'cobros'} · ${Fmt.L(validos.reduce((t, c) => t + Number(c.total), 0))}`;
+    const propinas = validos.reduce((t, c) => t + Number(c.propina || 0), 0);
+    cont.querySelector('#hi-total').textContent = `${validos.length} ${validos.length === 1 ? 'cobro' : 'cobros'} · ${Fmt.L(validos.reduce((t, c) => t + Number(c.total), 0))}` +
+      (propinas ? ` + ${Fmt.L(propinas)} de propinas` : '');
 
     if (!cobros.length) { lista.innerHTML = UI.vacio('receipt', 'No hay cobros este día.'); return; }
     lista.innerHTML = `<div class="tabla-envoltura"><table class="tabla apilable">
@@ -37,7 +39,7 @@ vista('cobros', {
         <td data-t="Barbero">${h(barberoDe(c.barbero_id).nombre)}</td>
         <td data-t="Detalle">${h(c.detalle.map(d => d.descripcion).join(', '))}</td>
         <td data-t="Pago">${c.estado === 'Anulado' ? '<span class="etiqueta gris">Anulado</span>' : h(c.metodo_pago)}</td>
-        <td data-t="Total" class="num"><strong>${Fmt.L(c.total)}</strong></td></tr>`).join('')}
+        <td data-t="Total" class="num"><strong>${Fmt.L(c.total)}</strong>${Number(c.propina) ? `<div class="suave peq">+ ${Fmt.L(c.propina)} propina</div>` : ''}</td></tr>`).join('')}
       </tbody></table></div>`;
     lista.querySelectorAll('tr[data-i]').forEach(tr => tr.onclick = () => this.detalle(cobros[Number(tr.dataset.i)], () => this.render(cont)));
   },
@@ -57,6 +59,8 @@ vista('cobros', {
         <div><span>Forma de pago</span><span>${h(c.metodo_pago)}</span></div>
         <div><span>Gana el barbero</span><span>${Fmt.L(c.pago_barbero)}</span></div>
         <div class="total"><span>Total</span><span>${Fmt.L(c.total)}</span></div>
+        ${Number(c.propina) ? `<div><span>Propina (para el barbero)</span><span>${Fmt.L(c.propina)}</span></div>
+        <div><span>Pagó el cliente</span><span>${Fmt.L(Number(c.total) + Number(c.propina))}</span></div>` : ''}
       </div>`;
     const botones = [{ texto: 'Cerrar', clase: 'sec' }];
     if (esDueno() && c.estado === 'Emitido') botones.unshift({
